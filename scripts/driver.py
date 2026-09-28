@@ -9,9 +9,10 @@ Problem (wing-body half model, Euler, M = 1.7):
          L(p)   = L0                          length fixed: control points move only in y and z
          |p_i| <= bounds,  [optional] |second differences of the control-point displacements| <= s
 
-Each design evaluation: SU2_DEF (FFD mesh deformation) -> SU2_CFD (fixed CL) ; the gradient needs two
-discrete adjoints (SU2_CFD_AD for CD and for CMy, both at constant CL) + SU2_DOT_AD (projection onto the FFD
-variables). The volume and its gradient are computed here from the surface mesh (see su2run.Volume).
+Each design evaluation: SU2_DEF (FFD mesh deformation) -> SU2_CFD (fixed CL); the gradient needs one fixed-AoA
+run at AoA + 0.1 deg (dCD/dCL, dCMy/dCL), two discrete adjoints (SU2_CFD_AD for CD and for CMy, both at constant
+CL) and SU2_DOT_AD (projection onto the FFD variables). The volume and its gradient are computed here from the
+surface mesh (see su2run.Volume).
 
 Usage (from the repository root):
     python scripts/make_mesh.py mesh/wing_body.su2 0.25
@@ -49,7 +50,7 @@ class Problem:
 
     def __init__(self, workdir, mesh=None, template=None, ffd="bezier", target_cl=0.10, xcg=G.X_CG,
                  vol_frac=0.995, aoa0=2.66, bnd_z=None, bnd_y=None, link_z01=None, smooth=None,
-                 direct_minval=-10.5, adj_minval=-8.5, direct_iter=3000, adj_iter=2500, **_):
+                 direct_minval=-10.5, adj_minval=-8.5, direct_iter=3000, adj_iter=2500, dcx="alpha", **_):
         opt = PRESET_OPTIONS[ffd]
         self.settings = dict(ffd=ffd, target_cl=target_cl, xcg=xcg, vol_frac=vol_frac, aoa0=aoa0,
                              bnd_z=opt["bnd_z"] if bnd_z is None else bnd_z,
@@ -58,7 +59,7 @@ class Problem:
                              smooth=opt["smooth"] if smooth is None else (None if smooth == "none" else smooth),
                              template=os.path.abspath(template or os.path.join(S.REPO, "config", "wing_body.cfg")),
                              direct_minval=direct_minval, adj_minval=adj_minval,
-                             direct_iter=direct_iter, adj_iter=adj_iter)
+                             direct_iter=direct_iter, adj_iter=adj_iter, dcx=dcx)
         s = self.settings
         self.runs = os.path.abspath(workdir)
         self.setup = os.path.join(self.runs, "setup")
@@ -134,6 +135,7 @@ class Problem:
     def cfg(self, path, x, **kw):
         s = self.settings
         d = dict(MATH_PROBLEM="DIRECT", RESTART_SOL="NO", AOA="2.0", DCD_DCL="0.0", DCMY_DCL="0.0",
+                 FIXED_CL="YES", EVAL_DOF_DCX="YES" if s.get("dcx") == "su2" else "NO", DISCARD_INFILES="NO",
                  XCG=f"{s['xcg']}", TARGET_CL=f"{s['target_cl']}", OBJ="DRAG", ITER=str(s["direct_iter"]),
                  CONV_FIELD="RMS_DENSITY", MINVAL=str(s["direct_minval"]), MESH_IN="mesh.su2", MESH_OUT="mesh_out.su2",
                  SOLUTION="solution_flow.dat", RESTART="restart_flow.dat", OUTPUT_FILES="(RESTART, SURFACE_CSV)",
@@ -222,6 +224,30 @@ class Evaluator:
               flush=True)
         return r
 
+    def dcx(self, r, dalpha=0.1):
+        """dCD/dCL and dCMy/dCL by a one-sided difference: a fixed-AoA run at AoA + dalpha restarted from the
+        converged fixed-CL solution. SU2's own estimate (EVAL_DOF_DCX= YES) can be wrong after a restart: when the
+        ITER_DCL_DALPHA stage ends on an iteration that is not written, the derivatives in flow.meta are not
+        updated (seen here as dCMy/dCL jumping from -0.04 to +0.85). Results are stored in dcx.json."""
+        P, d = self.P, r["dir"]
+        f = os.path.join(d, "dcx.json")
+        if os.path.exists(f):
+            r.update(json.load(open(f)))
+            return
+        P.cfg(os.path.join(d, "dalpha.cfg"), r["x"], MESH_IN=r["mesh"], AOA=f"{r['AoA'] + dalpha:.10f}",
+              FIXED_CL="NO", DISCARD_INFILES="YES", EVAL_DOF_DCX="NO", RESTART_SOL="YES",
+              SOLUTION="restart_flow.dat", RESTART="restart_da.dat", CONV_FILENAME="history_da",
+              MINVAL=str(P.settings["direct_minval"] + 1.0), OUTPUT_FILES="(RESTART)")
+        S.run("SU2_CFD", "dalpha.cfg", d, "log_dalpha.txt")
+        hdr, a = S.read_history(os.path.join(d, "history_da.csv"))
+        last = dict(zip(hdr, a[-1]))
+        dCL = last["CL"] - r["CL"]
+        out = dict(dCD_dCL=(last["CD"] - r["CD"]) / dCL, dCMy_dCL=(last["CMy"] - r["CMy"]) / dCL,
+                   dCL_dalpha=dCL / dalpha)
+        os.remove(os.path.join(d, "restart_da.dat"))
+        json.dump(out, open(f, "w"), indent=1)
+        r.update(out)
+
     def gradients(self, p):
         """Gradients of CD and CMy at constant CL w.r.t. the optimiser variables p (two discrete adjoints)."""
         P = self.P
@@ -229,11 +255,16 @@ class Evaluator:
         if "gCD" in r:
             return r
         d = r["dir"]
+        if P.settings.get("dcx", "alpha") == "alpha":
+            self.dcx(r)
         for obj, tag, key in (("DRAG", "cd", "CD"), ("MOMENT_Y", "cmy", "CMy")):
             cfg = f"adj_{tag}.cfg"
             P.cfg(os.path.join(d, cfg), r["x"], MESH_IN=r["mesh"], MATH_PROBLEM="DISCRETE_ADJOINT", OBJ=obj,
                   SOLUTION="restart_flow.dat", AOA=f"{r['AoA']:.12f}", DCD_DCL=f"{r['dCD_dCL']:.12g}",
                   DCMY_DCL=f"{r['dCMy_dCL']:.12g}", CONV_FIELD="RMS_ADJ_DENSITY",
+                  # SU2 silently resets DISCARD_INFILES to NO for a fixed-CL adjoint unless EVAL_DOF_DCX= YES
+                  # (CConfig.cpp); with NO it would take dJ/dCL from flow.meta instead of the values above
+                  DISCARD_INFILES="YES", EVAL_DOF_DCX="YES",
                   MINVAL=str(P.settings["adj_minval"]), ITER=str(P.settings["adj_iter"]),
                   CONV_FILENAME=f"history_adj_{tag}", SURFACE_FILENAME=f"surface_flow_adj_{tag}",
                   SURFACE_ADJ_FILENAME=f"surface_adjoint_{tag}", GRAD_FILENAME=f"of_grad_{tag}.csv",
@@ -334,10 +365,13 @@ def main():
     ap.add_argument("--bnd-y", type=float, default=None)
     ap.add_argument("--budget-hours", type=float, default=None)
     ap.add_argument("--stop-dk", type=float, default=1e-4)
+    ap.add_argument("--dcx", choices=("alpha", "su2"), default="alpha",
+                    help="dCD/dCL, dCMy/dCL for the constant-CL gradient: separate run at AoA + 0.1 deg (default) "
+                         "or SU2's EVAL_DOF_DCX estimate from flow.meta")
     a = ap.parse_args()
     S.check_su2()
     P = Problem(a.workdir, mesh=a.mesh, template=a.template, ffd=a.ffd, target_cl=a.target_cl, xcg=a.xcg,
-                vol_frac=a.vol_frac, bnd_z=a.bnd_z, bnd_y=a.bnd_y)
+                vol_frac=a.vol_frac, bnd_z=a.bnd_z, bnd_y=a.bnd_y, dcx=a.dcx)
     optimise(P, maxiter=a.maxiter, budget_s=a.budget_hours * 3600 if a.budget_hours else None, stop_dk=a.stop_dk)
 
 

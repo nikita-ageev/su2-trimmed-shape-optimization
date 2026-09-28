@@ -1,4 +1,4 @@
-"""First-order optimality (KKT) check on the accepted SLSQP iterations.
+"""First-order optimality (KKT) check on the accepted iterations (SLSQP and trsqp.py).
 
 At an iterate p_k with gradients:  grad f = lambda grad c_eq + sum mu_i grad c_i  (active inequalities and bounds),
 mu_i >= 0. The multipliers are found by sign-constrained least squares (scipy lsq_linear); the relative residual
@@ -56,7 +56,8 @@ def main():
     a = ap.parse_args()
     P = Problem.load(a.workdir)
     it_file = os.path.join(P.runs, "opt_iterations.txt")
-    its = [0] + ([int(l.split("eval")[1].split()[0]) for l in open(it_file)] if os.path.exists(it_file) else [])
+    its = [0] + ([int(l.split("eval")[1].split()[0]) for l in open(it_file) if "-> eval" in l]
+                 if os.path.exists(it_file) else [])
     out = []
     for k, ev in enumerate(its):
         if os.path.exists(os.path.join(P.runs, f"dsn_{ev:03d}", "grad_CD.txt")):

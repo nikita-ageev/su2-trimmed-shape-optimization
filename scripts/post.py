@@ -2,7 +2,7 @@
 convergence, optimisation history).
 
 Usage: python scripts/post.py --workdir runs/wing_body [--base 0] [--final N] [--out figures]
-(--final defaults to final_eval from opt_result.json). The Mach-field plot needs the `vtk` Python module.
+(--final defaults to final_eval from trsqp_result.json or, if absent, opt_result.json). The Mach-field plot needs the `vtk` Python module.
 """
 import argparse
 import json
@@ -109,7 +109,8 @@ def main(d0, d1):
     ax[0].plot(xg, zm1, "--", color=C1, lw=1, label="mid line (optimised)")
     ax[0].axvline(XCG, color="k", lw=0.8, ls=":")
     ax[0].text(XCG + 0.4, -2.3, "CG", fontsize=9)
-    ax[0].set_ylabel("z, m"); ax[0].set_ylim(-2.6, 2.6); ax[0].legend(loc="upper right", fontsize=8)
+    zmax = max(2.6, 0.2 + max(np.abs(c[on, 2]).max() for c in (c0, c1)))
+    ax[0].set_ylabel("z, m"); ax[0].set_ylim(-zmax, zmax); ax[0].legend(loc="upper right", fontsize=8)
     ax[0].set_title("Side view in the symmetry plane: fuselage contour before and after optimisation")
     ax[1].plot(xg, zm1 - zm0, color=C1, label="mid-line shift Δz, m")
     ax[1].plot(xg, h1 - h0, color="#2a9d8f", label="section height change Δh, m")
@@ -126,7 +127,7 @@ def main(d0, d1):
             for q0, q1 in segs:
                 for sg in (1, -1):
                     axs[k].plot([sg * q0[0], sg * q1[0]], [q0[1], q1[1]], color=col, lw=1.2)
-        axs[k].set_aspect("equal"); axs[k].set_xlim(-2.8, 2.8); axs[k].set_ylim(-2.2, 2.2)
+        axs[k].set_aspect("equal"); axs[k].set_xlim(-2.8, 2.8); axs[k].set_ylim(-zmax + 0.2, zmax - 0.2)
         axs[k].set_title(f"x = {x} m", fontsize=9)
     axs[0].set_ylabel("z, m")
     fig.suptitle("Cross-sections (blue: baseline, red: optimised; mirrored in y)", fontsize=10)
@@ -197,21 +198,40 @@ def main(d0, d1):
     ax[1].set_title("Discrete adjoint problems", fontsize=10)
     fig.tight_layout(); fig.savefig(os.path.join(FIG, "convergence.png")); plt.close(fig)
     res["rho_drop_orders"] = float(a[0, hdr.index("rms[Rho]")] - a[:, hdr.index("rms[Rho]")].min())
-    # ---------------- 7. optimisation history
+    # ---------------- 7. optimisation history: every solver call (grey) and the path of accepted iterates
     h = np.genfromtxt(os.path.join(RUNS, "dsn_history.csv"), delimiter=",", names=True)
-    fig, ax = plt.subplots(1, 3, figsize=(13, 3.6))
-    ax[0].plot(h["eval"], h["K"], "o-", ms=3); ax[0].set_title("K = CL/CD at fixed CL"); ax[0].set_xlabel("solver call")
-    ax[1].plot(h["eval"], h["CMy"] * 1e3, "o-", ms=3, color=C1); ax[1].axhline(0, color="k", lw=0.6)
-    ax[1].set_title("CMy about the CG, x1000"); ax[1].set_xlabel("solver call")
-    ax[2].plot(h["eval"], h["Vfus_rel"] * 100, "o-", ms=3, color="#2a9d8f")
-    ax[2].axhline(100 * VOL_FRAC, color="k", lw=0.6, ls="--")
-    ax[2].set_title("Fuselage volume, % of baseline"); ax[2].set_xlabel("solver call")
+    row = {int(e): k for k, e in enumerate(h["eval"])}
+    path, phase = [0], ["SLSQP"]        # accepted iterates; a restart "from eval N" cuts the path back to N
     itf = os.path.join(RUNS, "opt_iterations.txt")
-    ev_it = [int(l.split("eval")[1].split()[0]) for l in open(itf)] if os.path.exists(itf) else []
-    if ev_it:
-        sel = np.isin(h["eval"], ev_it)
-        ax[0].plot(h["eval"][sel], h["K"][sel], "s", color="k", ms=5, label="accepted SLSQP iterations")
-        ax[0].legend(fontsize=8)
+    for line in (open(itf) if os.path.exists(itf) else []):
+        if "eval" not in line:
+            continue
+        ev = int(line.split("eval")[1].split()[0])
+        if "from eval" in line:        # evals are numbered in time order: drop what came after the restart point
+            keep = [k for k, e in enumerate(path) if e <= ev]
+            path, phase = [path[k] for k in keep], [phase[k] for k in keep]
+            if path[-1] != ev and ev in row:
+                path.append(ev); phase.append("SLSQP")
+            continue
+        if ev in row:
+            path.append(ev); phase.append("TR-SQP" if line.startswith("iter T") else "SLSQP")
+    series = (("K", 1.0, "K = CL/CD at fixed CL", "#4a6fa5"), ("CMy", 1e3, "CMy about the CG, x1000", C1),
+              ("Vfus_rel", 100.0, "Fuselage volume, % of baseline", "#2a9d8f"))
+    fig, ax = plt.subplots(1, 3, figsize=(13, 3.6))
+    kk = np.arange(len(path))
+    for a_, (col, sc, title, colr) in zip(ax, series):
+        y = np.array([h[col][row[e]] for e in path]) * sc
+        for ph, mk in (("SLSQP", "o"), ("TR-SQP", "s")):
+            sel = np.array(phase) == ph
+            if sel.any():
+                a_.plot(kk[sel], y[sel], mk, color=colr, ms=4, label=ph)
+        a_.plot(kk, y, "-", color=colr, lw=1.2)
+        a_.set_title(title); a_.set_xlabel("accepted iteration")
+    ax[1].axhline(0, color="k", lw=0.6)
+    ax[2].axhline(100 * VOL_FRAC, color="k", lw=0.6, ls="--")
+    if "TR-SQP" in phase:
+        ax[0].legend(fontsize=8, loc="lower right")
+    res["history_path_evals"] = path
     fig.tight_layout(); fig.savefig(os.path.join(FIG, "opt_history.png")); plt.close(fig)
     print(json.dumps(res, indent=1))
 
@@ -254,6 +274,7 @@ if __name__ == "__main__":
     XCG = args.xcg if args.xcg is not None else settings.get("xcg", G.X_CG)
     VOL_FRAC = settings.get("vol_frac", 0.995)
     final = args.final
-    if final is None:
-        final = json.load(open(os.path.join(RUNS, "opt_result.json")))["final_eval"]
+    if final is None:       # the last optimiser that ran: trsqp.py (if any), otherwise driver.py
+        rf = [f for f in ("trsqp_result.json", "opt_result.json") if os.path.exists(os.path.join(RUNS, f))]
+        final = json.load(open(os.path.join(RUNS, rf[0])))["final_eval"]
     main(os.path.join(RUNS, f"dsn_{args.base:03d}"), os.path.join(RUNS, f"dsn_{final:03d}"))

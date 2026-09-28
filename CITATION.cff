@@ -1,10 +1,10 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "su2-trimmed-shape-optimization: trimmed aerodynamic shape optimisation with the SU2 discrete adjoint"
+title: "su2-trimmed-shape-optimization: trimmed aerodynamic shape optimization with the SU2 discrete adjoint"
 authors:
   - family-names: Ageev
     given-names: Nikita
-version: 0.1.0
+version: 0.1.1
 date-released: 2026-09-28
 license: MIT
 repository-code: "https://github.com/nikita-ageev/su2-trimmed-shape-optimization"
@@ -15,3 +15,36 @@ keywords:
   - shape optimization
   - aerodynamics
   - supersonic
+references:
+  - type: article
+    title: "SU2: An Open-Source Suite for Multiphysics Simulation and Design"
+    authors:
+      - family-names: Economon
+        given-names: Thomas D.
+      - family-names: Palacios
+        given-names: Francisco
+      - family-names: Copeland
+        given-names: Sean R.
+      - family-names: Lukaczyk
+        given-names: Trent W.
+      - family-names: Alonso
+        given-names: Juan J.
+    journal: "AIAA Journal"
+    volume: 54
+    issue: 3
+    start: 828
+    end: 846
+    year: 2016
+    doi: 10.2514/1.J053813
+  - type: conference-paper
+    title: "Combined approach on the aerodynamic shape optimization"
+    authors:
+      - family-names: Ageev
+        given-names: Nikita D.
+      - family-names: Pavlenko
+        given-names: A. A.
+    conference:
+      name: "HiSST 2018: International Conference on High-Speed Vehicle Science & Technology"
+      city: Moscow
+    year: 2018
+    url: "https://aerospacerepository.org/wp-content/uploads/2023/10/hisst-2018_600969.pdf"

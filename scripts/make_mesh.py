@@ -2,7 +2,7 @@
 
 Usage: python scripts/make_mesh.py <out.su2> [h_body] [h_far] [threads]
 Unstructured tetrahedral mesh; markers: aircraft, symmetry, farfield.
-h_body = 0.25 m gives ~350k tetrahedra (the published run), 0.6 m gives a quick ~50k-cell smoke-test mesh.
+h_body = 0.25 m gives ~350k tetrahedra (the published run), 0.6 m gives a quick ~90k-cell smoke-test mesh.
 """
 import os
 import sys

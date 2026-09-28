@@ -1,0 +1,7 @@
+# Python side of the driver (SU2 itself must be built separately with -Denable-autodiff=true, see README)
+numpy>=1.26
+scipy>=1.11
+matplotlib>=3.8
+gmsh>=4.11
+# optional: Mach-number plot in scripts/post.py
+# vtk>=9.2

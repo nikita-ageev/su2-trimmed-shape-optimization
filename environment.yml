@@ -1,0 +1,20 @@
+# conda / mamba environment: Python side of the driver + everything needed to build SU2 from source
+name: su2
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - scipy
+  - matplotlib
+  - gmsh
+  - python-gmsh
+  - vtk-base        # optional, only for the Mach-field plot in post.py
+  # to build SU2 with AD and MPI
+  - meson
+  - ninja
+  - pkg-config
+  - compilers
+  - openmpi
+  - mpi4py
+  - swig

@@ -1,0 +1,15 @@
+# run folders, meshes and SU2 outputs (large binaries are never committed)
+runs/
+mesh/
+*.su2
+*.dat
+*.vtu
+*.vtk
+*.szplt
+*.csv
+!figures/*.csv
+*.log
+log_*.txt
+__pycache__/
+*.pyc
+.DS_Store

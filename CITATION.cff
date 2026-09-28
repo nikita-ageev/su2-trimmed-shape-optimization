@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "su2-trimmed-shape-optimization: trimmed aerodynamic shape optimisation with the SU2 discrete adjoint"
+authors:
+  - family-names: Ageev
+    given-names: Nikita
+version: 0.1.0
+date-released: 2026-09-28
+license: MIT
+repository-code: "https://github.com/nikita-ageev/su2-trimmed-shape-optimization"
+keywords:
+  - SU2
+  - CFD
+  - adjoint
+  - shape optimization
+  - aerodynamics
+  - supersonic

@@ -11,8 +11,10 @@ aircraft shape **at fixed lift and zero pitching moment** (trimmed flight):
 * **length:** fixed (FFD control points move only in y and z).
 
 Shape parameterization: FFD (free-form deformation). Gradients: SU2 discrete adjoint (algorithmic
-differentiation), checked against finite differences. Optimizers: SciPy SLSQP and a small trust-region SQP
-(`scripts/trsqp.py`).
+differentiation), checked against finite differences. Optimizers: SciPy SLSQP, a small trust-region SQP
+(`scripts/trsqp.py`) and, through an analysis driver, [DAKOTA](https://dakota.sandia.gov)
+(`scripts/dakota_driver.py`). Baseline geometry: built in Gmsh (`scripts/make_mesh.py`) or parametrically with
+CadQuery → STEP → Gmsh (`scripts/geometry_cadquery.py`).
 
 **Main result** (supersonic wing-body, M = 1.7, Euler, CL = 0.10, 450 design variables):
 L/D goes from **15.91** (baseline, not trimmed) to **21.49** trimmed (**+35 %**), `CMy = -3·10⁻⁷`,
@@ -24,7 +26,8 @@ optimum**.
 
 - [Problem](#problem) · [Results](#results) · [Requirements](#requirements) · [Installation](#installation)
 - [Quick start: axisymmetric benchmark](#quick-start-axisymmetric-benchmark-about-10-minutes) ·
-  [Wing-body case](#wing-body-case) · [Repository layout](#repository-layout)
+  [Wing-body case](#wing-body-case) · [Optimizers](#optimizers) · [Geometry](#geometry)
+- [Verification status](#verification-status) · [Tests](#tests) · [Repository layout](#repository-layout)
 - [Practical notes](#practical-notes) · [Limitations](#limitations) · [Citing](#citing)
 
 ## Problem
@@ -137,6 +140,8 @@ optimizer can only exploit the nonlinear effects, and the gain is small.
 | Gmsh | 4.15 with the Python API (conda-forge `gmsh`, `python-gmsh`) | mesh generation (OpenCASCADE kernel) |
 | MPI | Open MPI 5.0 | optional; `SU2_NP=1` runs serially |
 | VTK | optional | only for the Mach-number plot in `post.py` |
+| DAKOTA | 6.24 (public CLI build) | optional; external optimizer through `scripts/dakota_driver.py` |
+| CadQuery | 2.8.0 | optional; parametric CAD route `scripts/geometry_cadquery.py` (`pip install cadquery`) |
 
 Tested on macOS (Apple silicon, arm64). The scripts contain nothing platform-specific; Linux should work with the
 same environment.
@@ -221,6 +226,98 @@ trust-region step), `timing.csv` (every SU2 call), `kkt.json`, and one folder pe
 `flow.vtu` and the gradients `grad_CD.txt`, `grad_CMy.txt` (optimizer variables) and `gradx_*.txt` (SU2
 variables).
 
+## Optimizers
+
+The problem (objective, constraints, gradients, design cache) is defined once in `scripts/driver.py` (`Problem`,
+`Evaluator`); three optimizers use it.
+
+* **SciPy SLSQP** (`driver.py`): sequential quadratic programming on the scaled problem (CD in drag counts,
+  CMy in 1e-3). Used for run 1 and for the first 10 iterations of run 2.
+* **Trust-region SQP** (`trsqp.py`): quadratic model with linearized constraints, ∞-norm trust region, merit
+  function, damped BFGS and a KKT-residual stopping test; written for the 450-variable B-spline case, where
+  SLSQP's line search stalled. Used for the last 18 iterations of run 2.
+* **DAKOTA** (`dakota_driver.py`, `dakota/`): DAKOTA's standard `fork` interface. DAKOTA writes a parameters
+  file (design variables, active-set vector, derivative variables); the driver runs SU2 and writes the
+  results file with `-K`, `0.995 - V/V0`, `CMy` and, on request, their gradients (`d(-K)/dp = (CL/CD²) dCD/dp`
+  from the fixed-CL adjoint, `dCMy/dp` from the second adjoint, the analytic volume gradient). Both
+  parameters-file formats (standard and aprepro) and derivative-variable subsets are supported; Hessian
+  requests are rejected. Each evaluation is a new process: the driver reloads the finished designs of the
+  workdir, serves repeated requests from that cache and restarts SU2 from the last solution.
+  `dakota_driver.py setup` embeds the FFD box and writes the input file: `dakota/trimmed_ld.in` is the one for
+  the 66-variable Bernstein box; for the B-spline box the 1110 smoothness rows go in as
+  `linear_inequality_constraint_matrix`.
+
+```bash
+python scripts/dakota_driver.py setup --mesh mesh/wing_body.su2 --workdir runs/dk --ffd bezier \
+    --out dakota/trimmed_ld.in
+SU2_NP=8 dakota -i dakota/trimmed_ld.in -o runs/dk/dakota.out
+```
+
+Methods of the public DAKOTA build (6.24) that take `analytic_gradients` with the equality and inequality
+constraints of this problem: `optpp_q_newton` (quasi-Newton with a nonlinear interior-point treatment of the
+constraints; default in `trimmed_ld.in`) and `rol` (augmented Lagrangian). `conmin_mfd` accepts the problem but
+stalled on the test problem. `npsol_sqp`, `nlpql_sqp` and `dot_sqp` need commercial libraries that the public
+binaries do not contain. The DAKOTA workdir has the layout of a `driver.py` workdir (`dsn_NNN/`,
+`dsn_history.csv`, `timing.csv`), so `fd_check.py`, `kkt.py` and `post.py` apply to it. Details, options and
+the stub problem for trying an input file without SU2: [`dakota/README.md`](dakota/README.md).
+
+## Geometry
+
+Two routes produce the same kind of tetrahedral mesh (markers `aircraft`, `symmetry`, `farfield`; flow box,
+size fields and algorithms are in `make_mesh.mesh_domain`):
+
+* **Gmsh only** (`make_mesh.py`, the published runs): the Sears-Haack body of revolution and the ruled-loft
+  wing are built in Gmsh's OpenCASCADE kernel (`make_mesh.build_aircraft`), fused and cut from the flow box.
+* **CadQuery → STEP → Gmsh** (`geometry_cadquery.py`): the fuselage is a parametric body of revolution
+  `r(x) = R (4ξ(1−ξ))ⁿ`, `ξ = x/L`, defined by its length `L`, its volume `V` (R follows), the exponent `n`
+  (0.75 = Sears-Haack) and an optional flat base cut at `x = xb L`; the wing is the same as above. CadQuery
+  writes a STEP file (`cad/aircraft_baseline.step`, 84 kB, is the baseline), Gmsh imports it and calls the same
+  `mesh_domain`. With the defaults the two routes differ only by the CAD tessellation: 97k against 93k
+  tetrahedra at h = 0.6 m, half-body volume from the surface mesh 208.4 against 207.8 m³.
+
+```bash
+pip install cadquery          # a separate venv is recommended (pulls in OCP, about 400 MB); or conda-forge cadquery
+python scripts/geometry_cadquery.py --step mesh/aircraft.step --mesh mesh/wing_body_cq.su2 --h-body 0.25
+python scripts/geometry_cadquery.py --step mesh/body.step --exponent 0.6 --base 0.95 --no-wing    # other bodies
+```
+
+This closes the loop CAD parameters → mesh → SU2 → discrete adjoint → optimizer: the CAD parameters (L, V, n,
+xb) define the baseline, the FFD variables deform it inside the optimization, and a new baseline costs one
+mesh. A CAD detail worth knowing: a single 360° face of revolution is periodic, and after the union with the
+wing its trimming is lost in the STEP export (only the patch inside the wing-body intersection survives), so
+the fuselage is built from two 180° revolutions with the seam plane at 45° to the wing and symmetry planes.
+
+![Mesh from the CadQuery route: plan view and symmetry-plane contour](figures/cadquery_mesh.png)
+
+## Verification status
+
+| item | status |
+|---|---|
+| adjoint gradients dCD/dp, dCMy/dp vs central finite differences | verified (0.02 % / 0.001 % at the baseline, 0.5–3.8 % at the final design of run 2, see Results; on the coarse DAKOTA-check mesh, `fd_check.py --h 0.1` at the baseline: dCD/dp 0.9 %, dCMy/dp 0.002 %, volume 3e-12) |
+| analytic volume gradient | verified to 1e-13 |
+| runs 1 and 2 (SLSQP, TR-SQP) | published above; run 2 is not converged to a KKT point (4.1 % residual) |
+| DAKOTA driver: parameters-file formats, ASV / DVV handling, gradient assembly | unit tests, no SU2 (`tests/test_dakota_driver.py`) |
+| DAKOTA 6.24 `optpp_q_newton` on the analytic stub problem | verified: same optimum as SciPy SLSQP (variables within 2e-3) |
+| DAKOTA 6.24 `rol` on the stub | verified: same optimum (within 3e-7), but 1524 evaluations |
+| DAKOTA 6.24 `conmin_mfd` on the stub | runs, stops after 9 evaluations 9 % above the optimum; not recommended |
+| DAKOTA 6.24 `optpp_q_newton` + SU2 8.5.0, coarse mesh (h = 0.6 m, 93k tetrahedra), 66 variables | two iterations run: 3 SU2 designs with gradients in 100 s on 8 cores; CMy −4.56e-3 → −3.77e-3, V/V0 1.0000 → 1.0003, K 19.61 → 19.58 (the interior-point method restores feasibility first) |
+| DAKOTA on the published mesh (h = 0.25 m) or on the 450-variable B-spline case | not run (input generated) |
+| CadQuery route: fuselage volume vs analytic, STEP round trip, mesh markers and extent | unit tests with CadQuery 2.8.0 and Gmsh 4.15.2 (`tests/test_geometry_cadquery.py`) |
+| CadQuery-route mesh through SU2 (h = 0.6 m, 97k tetrahedra, fixed-CL Euler run through the DAKOTA driver) | run: converges like the Gmsh-only mesh (900 iterations, 30 s on 8 cores); CD 48.9 against 51.0 counts, CMy −5.1e-3 against −4.6e-3, AoA 2.70° against 2.72° — the scatter of two different coarse tessellations, neither is grid-converged (see Limitations) |
+| `make_mesh.py` after the split into functions | same mesh as before (93473 tetrahedra with one thread; HXT with several threads is not reproducible run to run) |
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -v        # or: pytest tests
+```
+
+The tests need no SU2. `tests/test_dakota_driver.py` checks the DAKOTA file formats and the gradients in the
+results file against finite differences of the stub problem; with a `dakota` executable on `PATH` (or in
+`$DAKOTA_EXE`) it also runs DAKOTA on the stub and compares with SLSQP. `tests/test_geometry_cadquery.py`
+skips the CAD parts without CadQuery and the mesh part without Gmsh. The checks that need SU2 are
+`scripts/fd_check.py` on a workdir and the axisymmetric smoke test (`bench_axi.py --maxiter 2`).
+
 ## Repository layout
 
 | path | content |
@@ -228,11 +325,16 @@ variables).
 | `scripts/driver.py` | problem set-up, evaluator with caching and the dJ/dCL run, SLSQP, stopping rule |
 | `scripts/trsqp.py` | trust-region SQP on the same problem and evaluator |
 | `scripts/su2run.py` | SU2 wrapper: config templates, runs, history and gradient readers, FFD re-implementation, volume and its gradient |
-| `scripts/geometry.py`, `scripts/make_mesh.py` | wing-body geometry, FFD boxes, Gmsh mesh (markers `aircraft`, `symmetry`, `farfield`) |
+| `scripts/dakota_driver.py` | DAKOTA analysis driver (parameters file → SU2 → results file); `setup` writes the DAKOTA input; `--stub` analytic test problem |
+| `scripts/geometry.py`, `scripts/make_mesh.py` | wing-body geometry and FFD boxes; Gmsh geometry (`build_aircraft`) and mesh (`mesh_domain`; markers `aircraft`, `symmetry`, `farfield`) |
+| `scripts/geometry_cadquery.py` | parametric fuselage (length, volume, exponent, base cut) and wing in CadQuery → STEP → Gmsh mesh through `mesh_domain` |
 | `scripts/fd_check.py`, `scripts/kkt.py`, `scripts/post.py` | gradient check, KKT check, figures |
 | `scripts/bench_axi*.py` | axisymmetric Sears-Haack benchmark: mesh, optimization, figures |
 | `config/*.cfg` | SU2 config templates with `{PLACEHOLDERS}` |
-| `figures/` | figures of the published runs |
+| `dakota/` | `trimmed_ld.in` (generated DAKOTA input, 66 variables) and `README.md` |
+| `cad/aircraft_baseline.step` | baseline wing-body STEP file written by `geometry_cadquery.py` |
+| `tests/` | unit tests (DAKOTA driver, CadQuery route); no SU2 needed |
+| `figures/` | figures of the published runs and of the CadQuery-route mesh |
 
 Meshes, solutions and restart files are generated by the scripts and are not stored in the repository.
 
@@ -276,7 +378,7 @@ Meshes, solutions and restart files are generated by the scripts and are not sto
 If this driver is useful, please cite the repository (see `CITATION.cff`) and SU2:
 
 * N. Ageev, *su2-trimmed-shape-optimization: trimmed aerodynamic shape optimization with the SU2 discrete
-  adjoint*, version 0.1.1, 2026, <https://github.com/nikita-ageev/su2-trimmed-shape-optimization>.
+  adjoint*, version 0.2.0, 2026, <https://github.com/nikita-ageev/su2-trimmed-shape-optimization>.
 * T. D. Economon, F. Palacios, S. R. Copeland, T. W. Lukaczyk, J. J. Alonso, *SU2: An Open-Source Suite for
   Multiphysics Simulation and Design*, AIAA Journal 54(3), 828–846, 2016,
   [doi:10.2514/1.J053813](https://doi.org/10.2514/1.J053813).
@@ -300,4 +402,6 @@ K = CL/CD при заданной подъёмной силе (режим фик
 (балансировка), объём фюзеляжа не меньше 99,5 %, длина фиксирована. Компоновка «крыло–фюзеляж», M = 1,7, уравнения
 Эйлера, 450 параметров FFD (свободной деформации): K 15,91 → 21,49 (+35 %), CMy = −3·10⁻⁷, объём 99,50 %; на мелкой
 сетке +30,9 %. Остановлено по бюджету времени, невязка условий оптимальности (ККТ) 4,1 % — улучшенная форма,
-а не строгий оптимум.
+а не строгий оптимум. Версия 0.2.0: интерфейс к DAKOTA (драйвер анализа с аналитическими градиентами из
+сопряжённого решения) и параметрическая геометрия CadQuery → STEP → Gmsh — замкнутый цикл геометрия → сетка →
+SU2 → сопряжённый → оптимизатор.

@@ -10,6 +10,7 @@ dependencies:
   - gmsh
   - python-gmsh
   - vtk-base        # optional, only for the Mach-field plot in post.py
+  # - cadquery      # optional, parametric CAD route (scripts/geometry_cadquery.py)
   # to build SU2 with AD and MPI
   - meson
   - ninja

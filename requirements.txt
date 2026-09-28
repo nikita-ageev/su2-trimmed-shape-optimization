@@ -5,3 +5,5 @@ matplotlib>=3.8
 gmsh>=4.11
 # optional: Mach-number plot in scripts/post.py
 # vtk>=9.2
+# optional: parametric CAD route (scripts/geometry_cadquery.py); pulls in OCP, ~400 MB
+# cadquery>=2.4

@@ -186,6 +186,36 @@ class Evaluator:
                 return c
         return None
 
+    def load_eval(self, ev):
+        """Put a design computed earlier (folder <prefix>_NNN, possibly by another process) into the cache
+        without recomputing it; the next new design restarts from its flow solution."""
+        P = self.P
+        d = os.path.join(P.runs, f"{self.prefix}_{ev:03d}")
+        p = np.loadtxt(os.path.join(d, "p.txt"))
+        r = S.direct_summary(d)
+        mesh = "mesh_def.su2" if os.path.exists(os.path.join(d, "mesh_def.su2")) else "../setup/mesh_ffd.su2"
+        r.update(p=p, x=P.T @ p, dir=d, mesh=mesh, n=ev, Vrel=P.v_rel(p), smooth=P.smooth_violation(p))
+        if os.path.exists(os.path.join(d, "dcx.json")):
+            r.update(json.load(open(os.path.join(d, "dcx.json"))))
+        if os.path.exists(os.path.join(d, "grad_CD.txt")) and (P.settings.get("dcx", "alpha") != "alpha"
+                                                              or os.path.exists(os.path.join(d, "dcx.json"))):
+            r["gCD"] = np.loadtxt(os.path.join(d, "grad_CD.txt"))
+            r["gCMy"] = np.loadtxt(os.path.join(d, "grad_CMy.txt"))
+        self.cache.append(r)
+        self.last_restart, self.last_aoa = f"../{self.prefix}_{ev:03d}/restart_flow.dat", r["AoA"]
+        return r
+
+    def restore(self):
+        """Reload every completed design folder of the workdir (used by drivers that run one evaluation per
+        process, such as dakota_driver.py). Incomplete folders (no flow.meta) are skipped."""
+        runs, pre = self.P.runs, self.prefix + "_"
+        evs = sorted(int(n[len(pre):]) for n in os.listdir(runs) if n.startswith(pre) and n[len(pre):].isdigit())
+        for ev in evs:
+            if os.path.exists(os.path.join(runs, f"{pre}{ev:03d}", "flow.meta")):
+                self.load_eval(ev)
+        self.n = evs[-1] + 1 if evs else 0
+        return self
+
     def primal(self, p):
         P = self.P
         p = np.array(p, dtype=float, copy=True)        # SLSQP modifies its array in place: keep a copy

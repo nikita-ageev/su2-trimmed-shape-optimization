@@ -50,21 +50,7 @@ class TRSQP:
 
     def load_eval(self, ev):
         """Put an evaluated design into the evaluator cache without recomputing it."""
-        P, E = self.P, self.E
-        d = os.path.join(P.runs, f"dsn_{ev:03d}")
-        p = np.loadtxt(os.path.join(d, "p.txt"))
-        r = S.direct_summary(d)
-        mesh = "mesh_def.su2" if os.path.exists(os.path.join(d, "mesh_def.su2")) else "../setup/mesh_ffd.su2"
-        r.update(p=p, x=P.T @ p, dir=d, mesh=mesh, n=ev, Vrel=P.v_rel(p), smooth=P.smooth_violation(p))
-        if os.path.exists(os.path.join(d, "dcx.json")):
-            r.update(json.load(open(os.path.join(d, "dcx.json"))))
-        if os.path.exists(os.path.join(d, "grad_CD.txt")) and (P.settings.get("dcx", "alpha") != "alpha"
-                                                              or os.path.exists(os.path.join(d, "dcx.json"))):
-            r["gCD"] = np.loadtxt(os.path.join(d, "grad_CD.txt"))
-            r["gCMy"] = np.loadtxt(os.path.join(d, "grad_CMy.txt"))
-        E.cache.append(r)
-        E.last_restart, E.last_aoa = f"../dsn_{ev:03d}/restart_flow.dat", r["AoA"]
-        return p
+        return self.E.load_eval(ev)["p"]
 
     def funcs(self, p, grad=True):
         P, E = self.P, self.E

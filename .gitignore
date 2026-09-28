@@ -10,6 +10,12 @@ mesh/
 !figures/*.csv
 *.log
 log_*.txt
+# DAKOTA outputs (params/results/tabular files live in the workdir, runs/)
+dakota.rst
+dakota_tabular.dat
+params.in*
+results.out*
 __pycache__/
 *.pyc
 .DS_Store
+OPT_DEFAULT.out

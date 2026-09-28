@@ -1,0 +1,74 @@
+# DAKOTA input written by scripts/dakota_driver.py setup: ffd = bezier, 66 variables.
+# Run from the repository root:  dakota -i <this file> -o <workdir>/dakota.out
+environment
+  tabular_data
+    tabular_data_file = 'runs/dk/dakota_tabular.dat'
+  top_method_pointer = 'OPT'
+
+method
+  id_method = 'OPT'
+  optpp_q_newton
+    max_iterations = 30
+    max_function_evaluations = 150
+    convergence_tolerance = 1.0e-6
+    gradient_tolerance = 1.0e-4
+    max_step = 0.3
+    merit_function el_bakry
+    scaling
+  output normal
+
+variables
+  continuous_design = 66
+    initial_point
+      0 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0 0
+      0 0 0 0 0 0
+    lower_bounds
+      -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+      -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+      -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+      -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+      -1 -1 -1 -1 -0.5 -0.5 -0.5 -0.5 -0.5 -0.5
+      -0.5 -0.5 -0.5 -0.5 -0.5 -0.5 -0.5 -0.5 -0.5 -0.5
+      -0.5 -0.5 -0.5 -0.5 -0.5 -0.5
+    upper_bounds
+      1 1 1 1 1 1 1 1 1 1
+      1 1 1 1 1 1 1 1 1 1
+      1 1 1 1 1 1 1 1 1 1
+      1 1 1 1 1 1 1 1 1 1
+      1 1 1 1 0.5 0.5 0.5 0.5 0.5 0.5
+      0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+      0.5 0.5 0.5 0.5 0.5 0.5
+    descriptors
+      'z_0_0_0' 'z_0_0_1' 'z_0_1_0' 'z_0_1_1' 'z_1_0_0' 'z_1_0_1' 'z_1_1_0' 'z_1_1_1' 'z_2_0_0' 'z_2_0_1'
+      'z_2_1_0' 'z_2_1_1' 'z_3_0_0' 'z_3_0_1' 'z_3_1_0' 'z_3_1_1' 'z_4_0_0' 'z_4_0_1' 'z_4_1_0' 'z_4_1_1'
+      'z_5_0_0' 'z_5_0_1' 'z_5_1_0' 'z_5_1_1' 'z_6_0_0' 'z_6_0_1' 'z_6_1_0' 'z_6_1_1' 'z_7_0_0' 'z_7_0_1'
+      'z_7_1_0' 'z_7_1_1' 'z_8_0_0' 'z_8_0_1' 'z_8_1_0' 'z_8_1_1' 'z_9_0_0' 'z_9_0_1' 'z_9_1_0' 'z_9_1_1'
+      'z_10_0_0' 'z_10_0_1' 'z_10_1_0' 'z_10_1_1' 'y_0_1_0' 'y_0_1_1' 'y_1_1_0' 'y_1_1_1' 'y_2_1_0' 'y_2_1_1'
+      'y_3_1_0' 'y_3_1_1' 'y_4_1_0' 'y_4_1_1' 'y_5_1_0' 'y_5_1_1' 'y_6_1_0' 'y_6_1_1' 'y_7_1_0' 'y_7_1_1'
+      'y_8_1_0' 'y_8_1_1' 'y_9_1_0' 'y_9_1_1' 'y_10_1_0' 'y_10_1_1'
+
+interface
+  analysis_drivers = 'python scripts/dakota_driver.py --workdir runs/dk'
+    fork
+      parameters_file = 'runs/dk/params.in'
+      results_file = 'runs/dk/results.out'
+      file_save
+
+responses
+  objective_functions = 1
+    primary_scale_types = 'value'
+    primary_scales = 20.0
+  nonlinear_inequality_constraints = 1
+    nonlinear_inequality_scale_types = 'value'
+    nonlinear_inequality_scales = 0.01
+  nonlinear_equality_constraints = 1
+    nonlinear_equality_scale_types = 'value'
+    nonlinear_equality_scales = 1.0e-3
+  descriptors 'minus_K' 'vol_deficit' 'CMy'
+  analytic_gradients
+  no_hessians

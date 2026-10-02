@@ -287,11 +287,22 @@ by facet noise of the plane cuts on the side rays and is not meaningful; use it 
 less.
 
 Three further aircraft models built from open data (Concorde, MiG-29, Su-57; multi-box FFD, flow-through
-engines; not in this repository) were rerun with the same preset: the waves of the wall displacement and the nose
-bumps disappeared, the pressure along the nose became monotone, and the adjoint-vs-finite-difference error of
-dCMy fell from 24 % to 0.01 % (Concorde).  On those models, with the second-order check, L/D grew by 21 % (Concorde),
-12 % (MiG-29) and 23 % (Su-57) in 1–1.75 h on 4 cores, against 34 %, 25 % and 32 % of the free v0.2 runs in 3–6 h on 8
-cores with the wavy shapes.
+engines; not in this repository) were rerun with the same preset (v0.2 → v0.3, final designs):
+
+| measure | Concorde | MiG-29 | Su-57 |
+|---|---|---|---|
+| zig-zag: sign changes of the control-net second difference / possible | 7.2/12 → 0.9/3 | 4.5/10 → 0.4/2 | 5.6/11 → 0.7/3 |
+| largest displacement of the nose control planes, m | 0.31 → 0 | 0.30 → 0 | 0.30 → 0 |
+| waves of the wall displacement in the nose zone | 8 → 0 | 7 → 2 | 18 → 3 |
+| largest curvature added to the nose, 1/m | 0.23 → 0.027 | 5.6 → 0.062 | 4.7 → 0.43 |
+| L/D gain, checked with JST | +34 % → +21 % | +25 % → +12 % | +32 % → +23 % |
+| optimisation time | 6.3 h on 8 cores → 1.8 h on 4 | 6.0 h → 1.0 h | 2.7 h → 0.9 h |
+
+The gain is smaller: a shorter run, a clamped nose and half the variables (part of the v0.2 gain came from the
+wavy, unbuildable shapes). The adjoint-vs-finite-difference error of dCMy fell from 24 % to 0.01 % on Concorde
+but grew to 4–17 % on the fighters, where the most sensitive variable sits near the intake and the 1st-order
+scheme smears the intake shock; the waves went away because of the shape order and the metric, not because of
+gradient accuracy.
 
 ![Concorde nose, v0.2 vs v0.3: wall displacement and Cp](figures/v03_nose_concorde.png)
 

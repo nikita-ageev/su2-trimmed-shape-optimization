@@ -32,11 +32,15 @@ from scipy.optimize import minimize
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import su2run as S  # noqa: E402
 import geometry as G  # noqa: E402
+import presets as PR  # noqa: E402
 
 F_SCALE, C_SCALE = 1e4, 1e3        # objective CD in drag counts, CMy in 1e-3
 PRESET_OPTIONS = {
     "bezier": dict(bnd_z=1.0, bnd_y=0.5, link_z01=False, smooth=None),
     "bspline": dict(bnd_z=1.5, bnd_y=0.8, link_z01=True, smooth=(0.4, 0.25)),
+    # 9 planes along x instead of 15: the same curvature limit needs (8/14)^2 of the second difference; tightened
+    # further by 2 (see scripts/presets.py)
+    "bspline_low": dict(bnd_z=1.5, bnd_y=0.8, link_z01=True, smooth=(0.2, 0.125)),
 }
 
 
@@ -50,7 +54,8 @@ class Problem:
 
     def __init__(self, workdir, mesh=None, template=None, ffd="bezier", target_cl=0.10, xcg=G.X_CG,
                  vol_frac=0.995, aoa0=2.66, bnd_z=None, bnd_y=None, link_z01=None, smooth=None,
-                 direct_minval=-10.5, adj_minval=-8.5, direct_iter=3000, adj_iter=2500, dcx="alpha", **_):
+                 direct_minval=-10.5, adj_minval=-8.5, direct_iter=3000, adj_iter=2500, dcx="alpha",
+                 numerics="second_order", clamp_i=(), sobolev=None, preset=None, **_):
         opt = PRESET_OPTIONS[ffd]
         self.settings = dict(ffd=ffd, target_cl=target_cl, xcg=xcg, vol_frac=vol_frac, aoa0=aoa0,
                              bnd_z=opt["bnd_z"] if bnd_z is None else bnd_z,
@@ -59,7 +64,9 @@ class Problem:
                              smooth=opt["smooth"] if smooth is None else (None if smooth == "none" else smooth),
                              template=os.path.abspath(template or os.path.join(S.REPO, "config", "wing_body.cfg")),
                              direct_minval=direct_minval, adj_minval=adj_minval,
-                             direct_iter=direct_iter, adj_iter=adj_iter, dcx=dcx)
+                             direct_iter=direct_iter, adj_iter=adj_iter, dcx=dcx,
+                             numerics=numerics, clamp_i=sorted(int(i) for i in clamp_i),
+                             sobolev=list(sobolev) if sobolev else None, preset=preset)
         s = self.settings
         self.runs = os.path.abspath(workdir)
         self.setup = os.path.join(self.runs, "setup")
@@ -93,12 +100,15 @@ class Problem:
         L, M, N = spec.box["deg"]
         J = spec.box["fixj"]
         jz = range(1, J) if s["link_z01"] else range(J)     # link j = 0 and j = 1 -> smooth crest/keel at y = 0
-        self.pvars = [("z", i, j, k) for i in range(L + 1) for j in jz for k in range(N + 1)] + \
-                     [("y", i, j, k) for i in range(L + 1) for j in range(1, J) for k in range(N + 1)]
+        free_i = [i for i in range(L + 1) if i not in set(s.get("clamp_i") or ())]   # clamped planes: no variables
+        self.pvars = [("z", i, j, k) for i in free_i for j in jz for k in range(N + 1)] + \
+                     [("y", i, j, k) for i in free_i for j in range(1, J) for k in range(N + 1)]
         self.np = len(self.pvars)
         pidx = {v: n for n, v in enumerate(self.pvars)}
         self.T = np.zeros((spec.ndv, self.np))     # SU2 design variables x = T p
         for n, (i, j, k, d) in enumerate(spec.dvs):
+            if i not in free_i:
+                continue                                   # SU2 variable kept at 0
             if d == 2:
                 self.T[n, pidx[("z", i, max(j, 1) if s["link_z01"] else j, k)]] = 1.0
             else:
@@ -127,6 +137,13 @@ class Problem:
             U = np.unique(np.c_[np.array(rows), np.array(lims)], axis=0)
             self.Dsm, self.Lsm = U[:, :-1], U[:, -1]
 
+    def metric(self):
+        """Sobolev metric of the design space, M = I + eps_x Dx'Dx + eps_yz Dyz'Dyz (D: second differences of the
+        control-point displacements along x and across the box). trsqp.py uses it as the initial Hessian, so a
+        zig-zag of the control net (period of two planes) costs ~1 + 16 eps and a smooth bend ~1. Identity when
+        the preset has no smoothing (v0.2 behaviour)."""
+        return PR.sobolev_metric(self.pvars, self.settings.get("sobolev"))
+
     def bounds(self):
         s = self.settings
         return [(-s["bnd_z"], s["bnd_z"]) if v[0] == "z" else (-s["bnd_y"], s["bnd_y"]) for v in self.pvars]
@@ -142,7 +159,8 @@ class Problem:
                  CONV_FILENAME="history", SURFACE_FILENAME="surface_flow", SURFACE_ADJ_FILENAME="surface_adjoint",
                  GRAD_FILENAME="of_grad.csv",
                  SCREEN_OUTPUT="(INNER_ITER, RMS_DENSITY, RMS_ENERGY, LIFT, DRAG, MOMENT_Y, AOA)",
-                 HISTORY_OUTPUT="(ITER, RMS_RES, AERO_COEFF, AOA)")
+                 HISTORY_OUTPUT="(ITER, RMS_RES, AERO_COEFF, AOA)",
+                 NUMERICS=PR.NUMERICS[s.get("numerics", "second_order")])
         d.update(self.spec.cfg_fields())
         d.update(self.spec.dv_strings(np.zeros(self.spec.ndv) if x is None else x))
         d.update({k: str(v) for k, v in kw.items()})

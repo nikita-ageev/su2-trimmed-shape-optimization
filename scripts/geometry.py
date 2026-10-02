@@ -43,6 +43,9 @@ FFD_PRESETS = {
     "bezier": dict(x=(-0.4, L_FUS + 0.4), y=(0.0, 2.6), z=(-2.0, 2.0), deg=(10, 2, 1), blend=None, fixj=2, def_nl=2),
     # 15 x 5 x 5 cubic uniform B-spline control points, richer cross-sections (use with smoothness constraints)
     "bspline": dict(x=(-0.4, L_FUS + 0.4), y=(0.0, 2.8), z=(-2.0, 2.0), deg=(14, 4, 4), blend=(4, 4, 4), fixj=4, def_nl=3),
+    # v0.3 "robust" preset: 9 x 5 x 5 cubic B-spline control points (half as many planes along x, still C2);
+    # the nose planes i = 0, 1 and the tail plane i = 8 are clamped by the preset (scripts/presets.py)
+    "bspline_low": dict(x=(-0.4, L_FUS + 0.4), y=(0.0, 2.8), z=(-2.0, 2.0), deg=(8, 4, 4), blend=(4, 4, 4), fixj=4, def_nl=3),
 }
 
 if __name__ == "__main__":

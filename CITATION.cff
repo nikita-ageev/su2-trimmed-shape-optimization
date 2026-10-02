@@ -4,8 +4,8 @@ title: "su2-trimmed-shape-optimization: trimmed aerodynamic shape optimization w
 authors:
   - family-names: Ageev
     given-names: Nikita
-version: 0.2.0
-date-released: 2026-09-28
+version: 0.3.0
+date-released: 2026-10-02
 license: MIT
 repository-code: "https://github.com/nikita-ageev/su2-trimmed-shape-optimization"
 keywords:

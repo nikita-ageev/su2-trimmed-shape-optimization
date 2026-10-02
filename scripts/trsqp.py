@@ -124,7 +124,10 @@ class TRSQP:
             open(log, "w").write("k,eval,accepted,K,CD,CMy,Vrel,Delta,rho,kkt_rel,step_inf,time_s\n")
         F = self.funcs(p)
         Delta = delta0
-        H = np.eye(P.np) * max(np.abs(F["g"]).max() / 0.3, 1e-3)
+        # initial Hessian: identity (v0.2) or the problem's Sobolev metric I + eps D'D (D = second differences of
+        # the control net), which makes the first steps smooth instead of zig-zag (see Problem.metric)
+        M = P.metric() if hasattr(P, "metric") else np.eye(P.np)
+        H = M * max(np.abs(F["g"]).max() / 0.3, 1e-3)
         Ks = [F["r"]["CL"] / F["r"]["CD"]]
         lam, mu, kkt = self.multipliers(F, p)
         with open(its, "a") as fh:

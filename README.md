@@ -22,11 +22,15 @@ fuselage volume 99.50 %. On a 2.8× finer mesh the gain is +30.9 %. The run was 
 final KKT (first-order optimality) residual is 4.1 %, so the result is an improved design, **not a converged
 optimum**.
 
+**v0.3:** a `robust` preset (1st-order scheme for the optimisation, low-order FFD, nose clamped to 0th and 1st order,
+Sobolev metric in the optimizer) removes the surface waves and nose bumps of v0.2; the result is checked with the
+2nd-order scheme (`verify`). One command per run: `python run.py --preset robust|verify`.
+
 ## Contents
 
 - [Problem](#problem) · [Results](#results) · [Requirements](#requirements) · [Installation](#installation)
 - [Quick start: axisymmetric benchmark](#quick-start-axisymmetric-benchmark-about-10-minutes) ·
-  [Wing-body case](#wing-body-case) · [Optimizers](#optimizers) · [Geometry](#geometry)
+  [Wing-body case](#wing-body-case) · [Robust preset](#robust-preset-v03-no-waves-no-bumps-on-the-nose) · [Optimizers](#optimizers) · [Geometry](#geometry)
 - [Verification status](#verification-status) · [Tests](#tests) · [Repository layout](#repository-layout)
 - [Practical notes](#practical-notes) · [Limitations](#limitations) · [Citing](#citing)
 
@@ -189,6 +193,9 @@ configs, logs, surface CSV and ParaView files.
 
 ## Wing-body case
 
+Shortest route (v0.3): `python run.py --preset robust` then `python run.py --preset verify` (see
+[Robust preset](#robust-preset-v03-no-waves-no-bumps-on-the-nose)). The v0.2 commands below still work.
+
 Run 2 (B-spline box, 450 variables): SLSQP first, then the trust-region SQP from the last SLSQP iterate.
 
 ```bash
@@ -225,6 +232,69 @@ trust-region step), `timing.csv` (every SU2 call), `kkt.json`, and one folder pe
 `x.txt`, the SU2 configs and logs, `history*.csv`, `flow.meta`, `dcx.json` (dCD/dCL, dCMy/dCL), the surface CSV,
 `flow.vtu` and the gradients `grad_CD.txt`, `grad_CMy.txt` (optimizer variables) and `gradx_*.txt` (SU2
 variables).
+
+## Robust preset (v0.3): no waves, no bumps on the nose
+
+**Symptom.** After the v0.2 runs the fuselage wall had waves (a period of about two FFD control planes) and bumps
+near the nose, and the pressure along the body followed them.
+
+**Cause** (measured with `scripts/smoothness.py` and the final control net of run 2):
+
+| measure on run 2 (v0.2, 450 variables) | value |
+|---|---|
+| sign changes of the second difference along an average control line of the box | 5.2 of 12 possible (a zig-zag) |
+| largest displacement of the two nose control planes | 0.82 m |
+| new extrema of the wall displacement in the nose zone (x 0.6 … 23.4 m) | 10 |
+| bumps / dents of the nose radius (prominence > 12 mm) | 0 before → 2 after, up to 139 mm |
+
+The nose planes carry the largest pressure gradients and were free, so the optimizer pushed them furthest. The
+first trust-region steps use an identity Hessian, so they follow the raw adjoint gradient, which alternates from
+plane to plane; the second-difference limits (0.40 m) were too loose to stop that.
+
+**Fix.** `python run.py --preset robust` (optimisation) and `python run.py --preset verify` (check):
+
+* *1st-order scheme for the optimisation:* Roe without MUSCL (`MUSCL_FLOW= NO`, piecewise-constant reconstruction
+  of the state, i.e. a 0th-order reconstruction and a 1st-order scheme). Monotone at shocks, no limiter switching:
+  the discrete-adjoint gradient is a smooth function of the shape, and the solver needs fewer iterations.
+  The 2nd-order scheme (JST, as in v0.2) is used only by `verify`, which recomputes the baseline and the final
+  design at the same CL.
+* *Low-order shape:* `--ffd bspline_low`, 9 × 5 × 5 control points instead of 15 × 5 × 5 (cubic B-splines kept, so
+  the surface stays C2 — a piecewise-linear FFD would add kinks, i.e. shocks); 180 variables instead of 450.
+* *Nose clamped to 0th and 1st order* (planes i = 0 and i = 1 carry no variables: the tip position and the tip
+  slope stay as built), *tail to 0th order* (i = 8).
+* *Sobolev metric* `M = I + 2 Dx'Dx + 0.5 (Dy'Dy + Dz'Dz)` (D: second differences of the control net) as the initial
+  Hessian of `trsqp.py`: a zig-zag costs about 20 times more than a smooth bend, so the steps are smooth from the
+  first iteration. This preconditions the step, it does not change the gradient, so the KKT test stays exact.
+  (SU2's own `SMOOTH_GRADIENT` smooths the mesh sensitivity instead, which changes the gradient the optimizer
+  sees; the parameter-space metric was enough here.)
+
+**Check on the wing-body case** (coarse mesh h = 0.6 m, 93k tetrahedra, 8 trust-region iterations each, 4 MPI
+ranks; L/D at CL = 0.10 and CMy = 0, Euler):
+
+| | v02 preset (JST, 15 × 5 × 5, free nose) | robust preset (1st order, 9 × 5 × 5, clamped nose, Sobolev) |
+|---|---|---|
+| L/D, scheme of the optimisation | 19.65 → 26.77 (+36 %) | 19.04 → 20.27 (+6.5 %) |
+| L/D, recomputed with JST (`verify`) | same as above | 19.65 → 21.27 (+8.3 %) |
+| bumps / dents of the nose radius after optimisation | 3 (up to 15 mm) | 0 |
+| largest wall displacement in the nose zone | 0.88 m | 0.24 m |
+| largest curvature added to the nose profile | 0.073 1/m | 0.041 1/m |
+| wall time | 16 min | 4 min + 2 min check |
+
+The robust preset trades L/D for shape quality: in the same number of iterations it gains much less, because the
+nose — where the v02 run found most of its drag reduction, by reshaping it far from the original — is clamped, and
+the metric damps large local steps. On this coarse mesh the wave count of the displacement (`d_ext`) is dominated
+by facet noise of the plane cuts on the side rays and is not meaningful; use it with surface cells of 0.25 m or
+less.
+
+Three further aircraft models built from open data (Concorde, MiG-29, Su-57; multi-box FFD, flow-through
+engines; not in this repository) were rerun with the same preset: the waves of the wall displacement and the nose
+bumps disappeared, the pressure along the nose became monotone, and the adjoint-vs-finite-difference error of
+dCMy fell from 24 % to 0.01 % (Concorde).  On those models, with the second-order check, L/D grew by 21 % (Concorde),
+12 % (MiG-29) and 23 % (Su-57) in 1–1.75 h on 4 cores, against 34 %, 25 % and 32 % of the free v0.2 runs in 3–6 h on 8
+cores with the wavy shapes.
+
+![Concorde nose, v0.2 vs v0.3: wall displacement and Cp](figures/v03_nose_concorde.png)
+
 
 ## Optimizers
 
@@ -312,7 +382,7 @@ the fuselage is built from two 180° revolutions with the seam plane at 45° to 
 python -m unittest discover -s tests -v        # or: pytest tests
 ```
 
-The tests need no SU2. `tests/test_dakota_driver.py` checks the DAKOTA file formats and the gradients in the
+The tests need no SU2 and run on every push and pull request (GitHub Actions). `tests/test_presets_smoothness.py` checks the scheme written into the SU2 config by each preset, the clamped planes, that the Sobolev metric is symmetric positive definite and turns a zig-zag gradient into a smooth step, and that the smoothness metrics find a 50 mm bump and a wavy wall on synthetic bodies and nothing on a smooth ogive. `tests/test_dakota_driver.py` checks the DAKOTA file formats and the gradients in the
 results file against finite differences of the stub problem; with a `dakota` executable on `PATH` (or in
 `$DAKOTA_EXE`) it also runs DAKOTA on the stub and compares with SLSQP. `tests/test_geometry_cadquery.py`
 skips the CAD parts without CadQuery and the mesh part without Gmsh. The checks that need SU2 are
@@ -323,7 +393,10 @@ skips the CAD parts without CadQuery and the mesh part without Gmsh. The checks 
 | path | content |
 |---|---|
 | `scripts/driver.py` | problem set-up, evaluator with caching and the dJ/dCL run, SLSQP, stopping rule |
-| `scripts/trsqp.py` | trust-region SQP on the same problem and evaluator |
+| `run.py` | one command per run: `--preset robust` (optimisation), `verify` (2nd-order check), `v02` |
+| `scripts/presets.py` | presets: scheme, FFD, clamped planes, Sobolev metric |
+| `scripts/smoothness.py` | waves and nose bumps from SU2 surface output (plane cuts, five rays, Cp extrema) |
+| `scripts/trsqp.py` | trust-region SQP on the same problem and evaluator (initial Hessian = `Problem.metric()`) |
 | `scripts/su2run.py` | SU2 wrapper: config templates, runs, history and gradient readers, FFD re-implementation, volume and its gradient |
 | `scripts/dakota_driver.py` | DAKOTA analysis driver (parameters file → SU2 → results file); `setup` writes the DAKOTA input; `--stub` analytic test problem |
 | `scripts/geometry.py`, `scripts/make_mesh.py` | wing-body geometry and FFD boxes; Gmsh geometry (`build_aircraft`) and mesh (`mesh_domain`; markers `aircraft`, `symmetry`, `farfield`) |
@@ -333,7 +406,7 @@ skips the CAD parts without CadQuery and the mesh part without Gmsh. The checks 
 | `config/*.cfg` | SU2 config templates with `{PLACEHOLDERS}` |
 | `dakota/` | `trimmed_ld.in` (generated DAKOTA input, 66 variables) and `README.md` |
 | `cad/aircraft_baseline.step` | baseline wing-body STEP file written by `geometry_cadquery.py` |
-| `tests/` | unit tests (DAKOTA driver, CadQuery route); no SU2 needed |
+| `tests/` | unit tests (presets and metric, smoothness metrics, DAKOTA driver, CadQuery route); no SU2 needed; run by GitHub Actions |
 | `figures/` | figures of the published runs and of the CadQuery-route mesh |
 
 Meshes, solutions and restart files are generated by the scripts and are not stored in the repository.
@@ -378,7 +451,7 @@ Meshes, solutions and restart files are generated by the scripts and are not sto
 If this driver is useful, please cite the repository (see `CITATION.cff`) and SU2:
 
 * N. Ageev, *su2-trimmed-shape-optimization: trimmed aerodynamic shape optimization with the SU2 discrete
-  adjoint*, version 0.2.0, 2026, <https://github.com/nikita-ageev/su2-trimmed-shape-optimization>.
+  adjoint*, version 0.3.0, 2026, <https://github.com/nikita-ageev/su2-trimmed-shape-optimization>.
 * T. D. Economon, F. Palacios, S. R. Copeland, T. W. Lukaczyk, J. J. Alonso, *SU2: An Open-Source Suite for
   Multiphysics Simulation and Design*, AIAA Journal 54(3), 828–846, 2016,
   [doi:10.2514/1.J053813](https://doi.org/10.2514/1.J053813).
@@ -402,6 +475,6 @@ K = CL/CD при заданной подъёмной силе (режим фик
 (балансировка), объём фюзеляжа не меньше 99,5 %, длина фиксирована. Компоновка «крыло–фюзеляж», M = 1,7, уравнения
 Эйлера, 450 параметров FFD (свободной деформации): K 15,91 → 21,49 (+35 %), CMy = −3·10⁻⁷, объём 99,50 %; на мелкой
 сетке +30,9 %. Остановлено по бюджету времени, невязка условий оптимальности (ККТ) 4,1 % — улучшенная форма,
-а не строгий оптимум. Версия 0.2.0: интерфейс к DAKOTA (драйвер анализа с аналитическими градиентами из
+а не строгий оптимум. Версия 0.3.0: пресет robust (схема 1-го порядка для оптимизации, FFD низкого порядка, нос закреплён по 0-му и 1-му порядку, метрика Соболева в оптимизаторе) убирает волны поверхности и бугры на носу; итог проверяется схемой 2-го порядка (verify); запуск — `python run.py --preset robust|verify`. Версия 0.2.0: интерфейс к DAKOTA (драйвер анализа с аналитическими градиентами из
 сопряжённого решения) и параметрическая геометрия CadQuery → STEP → Gmsh — замкнутый цикл геометрия → сетка →
 SU2 → сопряжённый → оптимизатор.

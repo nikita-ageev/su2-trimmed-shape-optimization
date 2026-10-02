@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 (2026-10-02)
+
+Robust preset: no surface waves, no bumps on the nose.
+
+* Diagnosis of v0.2 run 2 (450 variables): the second differences of the final control net change sign 5.2 times
+  out of 12 possible along an average control line (a zig-zag with a period of two control planes), the free nose
+  planes moved by up to 0.82 m, and the nose zone of the fuselage got 10 new waves of the wall displacement and two
+  bumps of up to 139 mm on a body that had none (`scripts/smoothness.py`). Cause: free nose planes, which carry the
+  largest pressure gradients; an identity initial Hessian in `trsqp.py`, so the first steps follow the raw,
+  plane-to-plane alternating adjoint gradient; loose second-difference limits.
+* `scripts/presets.py` and `run.py`: one command per run, `python run.py --preset robust|verify|v02`.
+  * `robust` (optimisation): 1st-order Roe scheme without MUSCL (piecewise-constant reconstruction) instead of
+    JST; FFD `bspline_low`, 9 × 5 × 5 cubic B-spline control points instead of 15 × 5 × 5; nose clamped to 0th and
+    1st order (planes i = 0, 1 carry no variables), tail to 0th order (i = 8); tighter second-difference limits;
+    Sobolev metric `I + eps D'D` as the initial Hessian of the trust-region SQP (180 variables).
+  * `verify` (final check): JST, 2nd order, recomputes the baseline and the final design of the robust run.
+  * `v02`: the previous setup.
+* `scripts/smoothness.py`: smoothness metrics from SU2 surface output — plane cuts of the surface triangulation,
+  radius on five rays around the body axis, warts (non-monotone nose radius), waves of the wall displacement,
+  pressure extrema; command line and `run.py` write `smooth.json`.
+* `driver.Problem`: `numerics`, `clamp_i`, `sobolev` settings and `metric()`; `config/wing_body.cfg` takes the
+  scheme from the preset (`{NUMERICS}`; default unchanged: JST). `trsqp.py` uses `Problem.metric()` when present.
+* `tests/test_presets_smoothness.py` (no SU2 needed) and a GitHub Actions workflow running all unit tests.
+
 ## 0.2.0 (2026-09-28)
 
 * `scripts/dakota_driver.py`: DAKOTA analysis driver (standard and aprepro parameters files, ASV values /
